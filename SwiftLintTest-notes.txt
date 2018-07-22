@@ -1,0 +1,37 @@
+7/17/2018: how can I view the program execution sequence in Xcode? After some searching I’m reminded that this is called a stack trace. Read articles & eventually the Xcode doc, but it assumes that I’m familiar enough with debugging to know how to start a debug session. Open Debug navigator, but when I run the project, the results just flash on the screen. Eventually guess that I might need to insert a breakpoint somewhere in the code to see any debug results. Place a breakpoint on the ‘let violations = … ‘ line in ColonRule.swift, then run the project. Bingo! Threads are listed in the Debug navigator, and I can see where ColonRule.validate(file) is executed (on thread 5), and all the way back up the stack to the start.
+
+
+7/21/2018:
+In ColonRule+Type.swift, the function that performs the regex match is defined with two names for each parameter. ThIn ColonRule+Type.swift, the function validate(file:) has a constructed variable that is constructed with the function typeColonViolationRanges(in:matching:). But that function is defined with two names for each parameter. This has been very confusing. I now understand that a parameter can have an ‘external’ name and an ‘internal’ name; both will appear before each colon in this order. The first parameter has an internal name ‘file’, and external name ‘in’. The second parameter has the internal name ‘pattern’, and the external name ‘matching’, as follows:
+
+	func typeColonViolationRanges(in file: File, matching pattern: String) -> [NSRange] {
+
+In ColonRule.swift, the function is called using the external parameter names. Note that only one parameter name, the external name, appears before each colon:
+
+	let violations = typeColonViolationRanges(in: file, matching: pattern)
+
+This was confusing for a few reasons. One, I’m not accustomed to seeing two parameter names defined for a single parameter. Two, the external parameter names are not nouns, ‘matching’ is an adjective or gerund based on the verb ‘match’, and ‘in’ is a preposition. They seem odd for names of parameters. Three, the variable/constant names passed to the function when it is called (‘pattern’ and ‘file’) are exactly the same as the external parameter names.
+
+OK. Now, follow the path of execution to approach the function that actually performs the regex match:
+
+1	ColonRule.swift		validate(file:)
+2	ColonRule.swift		let violations
+3	ColonRule+Type.swift	typeColonViolationRanges(file:pattern:)
+4	File+SwiftLint.swift		rangesAndTokens(pattern:range:)
+5	File+SwiftLint.swift		matchesAndTokens(pattern:range:)
+	
+	#5 calls regex(pattern), passing ‘pattern’, with no options parameter, and returns an NSRegularExpression instance. 
+	
+6	File+SwiftLint.swift		regex(pattern:)
+
+	The NSRegularExpression instance calls its matches(in:options:range) method, with an empty array of options and a range.
+
+7	Foundation > NSRegularExpression	matches(in:options:range) 
+
+    	According to the comments documentation here, NSRegularExpression works by iterating through a block, which is an object, in this case self.contents, which is a complex way to get file contents via the DispatchQueue, as far as I can tell.
+
+	matches(in:options:range) returns an NSTextCheckingResult array. Each NSTextCheckingResult (a Foundation class) is a struct that must at minimum contain a resultType and a range.
+
+	open func matches(in string: String, options: NSRegularExpression.MatchingOptions = [], range: NSRange) -> [NSTextCheckingResult]
+
+	 The NSTextCheckingResult array calls its ‘map’ method, which takes a closure which checks each item to determine if any syntax tokens exist in the result range, and for each item, returns a tuple containing the  original match plus a ‘tokensInRange’ array of SyntaxTokens. 
